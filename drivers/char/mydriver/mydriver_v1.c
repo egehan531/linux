@@ -5,80 +5,75 @@
 #include <linux/cdev.h>
 #include <linux/device.h>
 #include <linux/uaccess.h>
+#include <linux/slab.h>
 #include <linux/gpio.h>
 #include <linux/gpio/consumer.h>
+#include <linux/ioctl.h>
+#include <linux/interrupt.h>
 
 #define GPIO_PIN 714
+#define DUMMY_INTERRUPT 715
+
+#define MAGIC_NUM 'G'
+#define GPIO_SET_HIGH _IO(MAGIC_NUM, 0)
+#define GPIO_SET_LOW _IO(MAGIC_NUM, 1)
 
 static dev_t dev_num;
 static struct class *dev_class;
 static struct cdev my_cdev;
 static char *kernel_buffer;
-static unsigned int buffer_size = 512;
-static int data_size = 0;
+static unsigned int buffer_size = 1024;
+
+static int irq_number;
+static unsigned int irq_trigger_count = 0;
 
 static int my_open(struct inode *inode, struct file *filp)
 {
-    pr_info("Device file açıldı.\n");
+    pr_info("mydevice -> Device file açıldı.\n");
     return 0;
 }
 
 static int my_release(struct inode *inode, struct file *filp)
 {
-    pr_info("Device file kapandı.\n");
+    pr_info("mydevice -> Device file kapandı.\n");
     return 0;
 }
 
-static ssize_t my_read(struct file *filp, char __user *user_buf, size_t count, loff_t *offset)
+static long my_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
-    ssize_t bytes_read;
+    switch (cmd) {
+        case GPIO_SET_HIGH:
+            gpio_set_value(GPIO_PIN, 1);
+            pr_info("GPIO %d IOCTL ile HIGH yapıldı.\n", GPIO_PIN);
+            break;
 
-    if (*offset >= data_size)
-        return 0;
+        case GPIO_SET_LOW:
+            gpio_set_value(GPIO_PIN, 0);
+            pr_info("GPIO %d IOCTL ile LOW yapıldı.\n", GPIO_PIN);
+            break;
 
-    if (count > data_size - *offset)
-        count = data_size - *offset;
-
-    bytes_read = copy_to_user(user_buf, kernel_buffer + *offset, count);
-    if (bytes_read != 0)
-        return -EFAULT;
-
-    *offset += count;
-    return count;
-}
-
-static ssize_t my_write(struct file *filp, const char __user *user_buf, size_t count, loff_t *offset)
-{
-    if (count >= buffer_size)
-        count = buffer_size - 1;
-
-    if (copy_from_user(kernel_buffer, user_buf, count))
-        return -EFAULT;
-
-    kernel_buffer[count] = '\0';
-    data_size = count;
-    *offset = 0;
-
-    if (kernel_buffer[0] == '1') {
-        gpio_set_value(GPIO_PIN, 1);
-        pr_info("GPIO %d HIGH yapıldı.\n", GPIO_PIN);
-    } else if (kernel_buffer[0] == '0') {
-        gpio_set_value(GPIO_PIN, 0);
-        pr_info("GPIO %d LOW yapıldı.\n", GPIO_PIN);
-    } else {
-        pr_warn("Geçersiz GPIO komutu! HIGH için 1, LOW için 0\n");
+        default:
+            pr_warn("Geçersiz IOCTL komutu: %u\n", cmd);
+            return -EINVAL;
     }
 
-    return count;
+    return 0;
+}
+
+static irqreturn_t irq_handler(int irq, void *dev_id)
+{
+    irq_trigger_count++;
+    pr_info("GPIO %d interrupted. Toplam: %u\n", DUMMY_INTERRUPT, irq_trigger_count);
+    return IRQ_HANDLED;
 }
 
 static struct file_operations fops = {
     .owner = THIS_MODULE,
     .open = my_open,
     .release = my_release,
-    .read = my_read,
-    .write = my_write,
-    .unlocked_ioctl = NULL,
+    .read = NULL,
+    .write = NULL,
+    .unlocked_ioctl = my_ioctl,
 };
 
 static int __init my_init(void)
@@ -139,12 +134,67 @@ static int __init my_init(void)
         return -EINVAL;
     }
 
-    pr_info("Modül yüklendi. Major: %d, Minor: %d\n", MAJOR(dev_num), MINOR(dev_num));
+    if (gpio_request(DUMMY_INTERRUPT, "myirq") < 0) {
+        gpio_free(GPIO_PIN);
+
+        device_destroy(dev_class, dev_num);
+        class_destroy(dev_class);
+        cdev_del(&my_cdev);
+        unregister_chrdev_region(dev_num, 1);
+        kfree(kernel_buffer);
+        return -EBUSY;
+    }
+
+    if (gpio_direction_input(DUMMY_INTERRUPT) < 0) {
+        gpio_free(DUMMY_INTERRUPT);
+        gpio_free(GPIO_PIN);
+
+        device_destroy(dev_class, dev_num);
+        class_destroy(dev_class);
+        cdev_del(&my_cdev);
+        unregister_chrdev_region(dev_num, 1);
+        kfree(kernel_buffer);
+        return -EINVAL;
+    }
+
+    irq_number = gpio_to_irq(DUMMY_INTERRUPT);
+
+    if (irq_number < 0) {
+        gpio_free(DUMMY_INTERRUPT);
+        gpio_free(GPIO_PIN);
+
+        device_destroy(dev_class, dev_num);
+        class_destroy(dev_class);
+        cdev_del(&my_cdev);
+        unregister_chrdev_region(dev_num, 1);
+        kfree(kernel_buffer);
+        return irq_number;
+    }
+
+    if (request_irq(irq_number, irq_handler, IRQF_TRIGGER_RISING, "dummy_irq", NULL)) {
+        gpio_free(DUMMY_INTERRUPT);
+        gpio_free(GPIO_PIN);
+
+        device_destroy(dev_class, dev_num);
+        class_destroy(dev_class);
+        cdev_del(&my_cdev);
+        unregister_chrdev_region(dev_num, 1);
+        kfree(kernel_buffer);
+        return -EBUSY;
+    }
+
+    pr_info("mydevice -> Modül yüklendi. Major: %d, Minor: %d\n", MAJOR(dev_num), MINOR(dev_num));
+    pr_info("myast2500board -> Class oluştu.\n");
+    pr_info("mygpio -> Pin alındı.\n");
+    pr_info("myirq -> Pin alındı.\n");
     return 0;
 }
 
 static void __exit my_exit(void)
 {
+    free_irq(irq_number, NULL);
+    gpio_free(DUMMY_INTERRUPT);
+
     gpio_direction_output(GPIO_PIN, 0);
     gpio_free(GPIO_PIN);
 
@@ -156,7 +206,7 @@ static void __exit my_exit(void)
 
     kfree(kernel_buffer);
 
-    pr_info("Modül kaldırıldı.\n");
+    pr_info("mydevice -> Modül kaldırıldı.\n");
 }
 
 
