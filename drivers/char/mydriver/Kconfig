@@ -1,0 +1,5 @@
+config MYDRIVER_V1
+    tristate "My Driver v1"
+    depends on GPIOLIB
+    help
+      My custom GPIO driver version 1 for AST2500 platform.
