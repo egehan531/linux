@@ -103,7 +103,7 @@ static int __init my_init(void)
         return num;
     }
 
-    dev_class = class_create(THIS_MODULE, "myast2500board");
+    dev_class = class_create("myast2500board");
     if (IS_ERR(dev_class)) {
         cdev_del(&my_cdev);
         unregister_chrdev_region(dev_num, 1);
