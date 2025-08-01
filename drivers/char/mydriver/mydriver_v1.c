@@ -11,8 +11,8 @@
 #include <linux/ioctl.h>
 #include <linux/interrupt.h>
 
-#define GPIO_PIN 714
-#define DUMMY_INTERRUPT 715
+#define GPIO_PIN 706
+#define DUMMY_INTERRUPT 714
 
 #define MAGIC_NUM 'G'
 #define GPIO_SET_HIGH _IO(MAGIC_NUM, 0)
