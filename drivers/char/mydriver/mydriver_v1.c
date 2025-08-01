@@ -62,6 +62,10 @@ static long my_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 static irqreturn_t irq_handler(int irq, void *dev_id)
 {
+    static bool led_state = false;
+    led_state = !led_state;
+    gpio_set_value(GPIO_PIN, led_state);
+
     irq_trigger_count++;
     pr_info("GPIO %d interrupted. Toplam: %u\n", DUMMY_INTERRUPT, irq_trigger_count);
     return IRQ_HANDLED;
